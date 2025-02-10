@@ -10,6 +10,19 @@ from collections import deque
 
 from sub_PyMunk_Env import printf
 
+"""
+Version : 1.1.0
+Notes 
+1. To fix the initial position of the robot (acomplished)
+2. Stop and sweep (acomplished)
+3. Added get_speed()
+Error 
+1. the speed display is wrong when in reverse
+"""
+
+"""
+Objective : 
+"""
 # Initialize Pygame
 pygame.init()
 
@@ -56,7 +69,10 @@ space.gravity = (0, 0)  # No gravity (top-down simulation)
 # Robot (Autonomous Agent)
 robot_size = 40  # Length of the sides of the square
 robot_body = pymunk.Body(1, pymunk.moment_for_box(1, (robot_size, robot_size)))
-robot_body.position = (WIDTH // 2, HEIGHT // 2)
+ROBOT_INITIAL_POS_X  = WIDTH *3 //4 
+ROBOT_INITIAL_POS_Y  = HEIGHT //2
+
+robot_body.position = (ROBOT_INITIAL_POS_X, ROBOT_INITIAL_POS_Y)
 robot_shape = pymunk.Poly.create_box(robot_body, (robot_size, robot_size))
 robot_shape.collision_type = COLLTYPE_ROBOT
 robot_shape.color = BLUE  # not sure why this is needed
@@ -75,10 +91,10 @@ ir_tracker_radius = 8
 ir_trackers = []
 
 # Movement settings
-speed = 200  # Pixels per second
+speed = 100  # Pixels per second
 scan_range = 1000  # LiDAR scan range, AKA length
 center_range = 20  # Angle increment per LiDAR ray
-robot_direction = 0  # Facing direction in degrees (initialized)
+robot_direction = 180  # Facing direction in degrees (initialized)
 
 # DEFINING THE IR LINE TRACKER
 ANGLES = [45, 135, 225, 315] # convert to radians
@@ -92,6 +108,15 @@ ir_trackers = []
 num_ir_trackers = 4
 ir_tracker_position_x = 0
 ir_tracker_position_y = 0
+
+# ====== stop_and_sweep intialization ====== start
+rotation_sequence = [-15, 30, -15]  # Sweep left 15°, right 30°, left 15° (back to original)
+rotation_index = 0  # Track which step we're at
+prev_time = 0  # Track time of last rotation update
+rotation_delay = 1000  # Delay between rotations (in milliseconds)
+time_initialized = False
+prev_time = 0
+# ====== stop_and_sweep intialization ====== end
 
 # Define the ir_trackers
 for _ in range(num_ir_trackers):
@@ -112,15 +137,27 @@ def is_point_in_circle(point, circle_center, circle_radius):
 def handle_mouse_click():
     global rewards
     mouse_pos = pygame.mouse.get_pos()
+    clicked_on_reward = False
+
     for reward in rewards:
         if is_point_in_circle(mouse_pos, reward.body.position, reward_radius):
             space.remove(reward, reward.body)
             rewards.remove(reward)
+            clicked_on_reward = True
             break
+
+    if not clicked_on_reward:
+        reward_body = pymunk.Body(body_type=pymunk.Body.STATIC)
+        reward_body.position = mouse_pos
+        reward_shape = pymunk.Circle(reward_body, reward_radius)
+        reward_shape.collision_type = COLLTYPE_REWARD
+        reward_shape.color = GREEN
+        rewards.append(reward_shape)
+        space.add(reward_body, reward_shape)
 
 # Generate rewards (Green circles)
 reward_radius = 5
-num_rewards = 10
+num_rewards = 3
 rewards = []
 
 #datetime used for zigzag strategy
@@ -210,124 +247,53 @@ def lidar_scan():
     temp_lidar_object = None
     #printf(f"                                   the obejct is = {temp_lidar_object}", "DEBUG")
     
-    if state == States.MOVE_TOWARDS_LOST: #check if its caused by move_towards_lost
-        pass
-    else:
-        state = States.EXPLORE #if detected, change the state to move towards
+    if state == States.MOVE_TOWARDS: #check if its caused by move_towards_lost
+        state = States.MOVE_TOWARDS_LOST
     
     return temp_lidar_object
-"""
-def move_towards(target):
-    #Move the robot towards a target position and update direction.
-    global state 
-    global robot_body
-    global robot_direction
-    
-    #update the state
-    state = States.MOVE_TOWARDS
-    
-    # Move straight in the existing direction
-    rad_angle = math.radians(robot_direction)
-    robot_body.velocity = pymunk.Vec2d(math.cos(rad_angle) * speed, math.sin(rad_angle) * speed)
-#=======================================================================================================
-    # # Calculate the direction vector from the robot to the target reward
-    # direction_vector = target.body.position - robot_body.position
-    
-    # # Normalize the direction vector and scale it by the robot's speed
-    # direction_vector = direction_vector.normalized() * speed
-    
-    # # Set the robot's velocity to move towards the target reward
-    # robot_body.velocity = direction_vector
-    
-
-    # Update robot direction to face the target
-    #robot_direction = math.degrees(math.atan2(direction_vector.y, direction_vector.x))
-#=======================================================================================================
-
-    # Ensure the robot direction is within valid bounds (-180 to 180 degrees)
-    robot_direction = normalize_angle(robot_direction)
-"""
-
-# Initialize variables
-rotation_sequence = [-15, 30, -15]  # Sweep left 15°, right 30°, left 15° (back to original)
-rotation_index = 0  # Track which step we're at
-rotation_timer = 0  # Track time of last rotation update
-rotation_delay = 500  # Delay between rotations (in milliseconds)
 
 def stop_and_sweep():
     """Handles non-blocking rotation of the robot in a sweeping motion."""
-    global robot_direction, rotation_index, rotation_timer, state, robot_body
-
+    global robot_direction, rotation_index, rotation_timer, state, robot_body, time_initialized, prev_time
     
     robot_body.velocity = pymunk.Vec2d(0,0) # stop the bot
-    
-    current_time = pygame.time.get_ticks()  # Get current time in milliseconds
 
+    if not time_initialized:
+        prev_time = pygame.time.get_ticks()  # Get current time in milliseconds
+        time_initialized = True
+    
     # Only update rotation if enough time has passed
-    if current_time - rotation_timer >= rotation_delay:
+    current_time = pygame.time.get_ticks()  # Get current time in milliseconds
+    if current_time - prev_time >= rotation_delay:
         if rotation_index < len(rotation_sequence):  # If more rotations left in sequence
             robot_direction += rotation_sequence[rotation_index]  # Apply rotation step
             robot_direction = normalize_angle(robot_direction)  # Keep within -180 to 180
             robot_body.angle = math.radians(robot_direction)  # Update physics engine
-
-            rotation_index += 1  # Move to next step
-            rotation_timer = current_time  # Reset timer
-
+            
+            rotation_index += 1  # Move to next step in sequence, if > len(rotation_sequence) then break then back to 0
+            time_initialized = False # Reset time_initialized
         else:
             printf("Sweeping Complete.", "SUCCESS")
+            rotation_index = 0 # Reset rotation index, also reset when move_towards because u want continuous sweeping
+            time_initialized = False
             state = States.EXPLORE  # Return to exploration mode
-
-
-
-# def move_towards(target):
-#     """Move the robot towards a target position and update direction."""
-#     global state 
-#     global robot_body
-#     global robot_direction
-#     global rad_angle
-    
-#     lost = False
-
-#     # while not lost
-#     while not lost:
-#         temp_prev_dist_robot_reward = (target.body.position - robot_body.position).length #store the initial distance between the robot and the target
-#         #update the state
-#         state = States.MOVE_TOWARDS
         
-#         # Move straight in the existing direction
-#         rad_angle = math.radians(robot_direction)
-#         robot_body.velocity = pymunk.Vec2d(math.cos(rad_angle) * speed, math.sin(rad_angle) * speed)
 
-#         # None = lost
-#         if lidar_scan() == None:
-#             # i want the robot to rotate 15 degree sweep left and right
-#             lost = stop_and_sweep(temp_prev_dist_robot_reward)
-
-#     # Ensure the robot direction is within valid bounds (-180 to 180 degrees)
-#     robot_direction = normalize_angle(robot_direction)
-
-def move_towards(target):
+def move_towards():
     """Move the robot towards a target position and update direction."""
     global state 
     global robot_body
     global robot_direction
     global rad_angle
-
-    temp_prev_dist_robot_reward = (target.body.position - robot_body.position).length  # store the initial distance between the robot and the target
+    global rotation_index
     
     # Move straight in the existing direction
     rad_angle = math.radians(robot_direction)
     robot_body.velocity = pymunk.Vec2d(math.cos(rad_angle) * speed, math.sin(rad_angle) * speed)
 
-    # Check if the target is lost
-    if target is None:
-        #change state 
-        state = States.MOVE_TOWARDS_LOST
-
-    # Ensure the robot direction is within valid bounds (-180 to 180 degrees)
+    
     robot_direction = normalize_angle(robot_direction)
-
-
+    rotation_index = 0 # Reset rotation index, also reset this from move_towards because u want continuous sweeping if it transition from move_towards_lost to move_towards
 
 # Exploration Mode - Random movement when no rewards detected
 def explore():
@@ -357,7 +323,12 @@ def explore():
     rad_angle = math.radians(robot_direction)
     robot_body.velocity = pymunk.Vec2d(math.cos(rad_angle) * speed, math.sin(rad_angle) * speed)
 
-
+def return_to_base():
+    global robot_direction
+    global robot_body
+    robot_direction = 180  # set facing direction to 180 degrees (left)
+    rad_angle = -(math.radians(robot_direction))  # Flip the angle
+    robot_body.velocity = pymunk.Vec2d(-math.cos(rad_angle) * speed, -math.sin(rad_angle) * speed)  # move backwards
 
 def draw_lidar():
         for angle_offset in [-10, 0, 10]:
@@ -390,15 +361,18 @@ def rotate_robot(corners, rad_angle): #rad angle is radians
 
         return rotated_corners
     
-def state_manager(state_args, target_reward_args):
+def state_manager(state_args):
     if state_args == States.EXPLORE:
         explore()
 
     elif state_args == States.MOVE_TOWARDS:
-        move_towards(target_reward_args)
+        move_towards()
         
     elif state_args == States.MOVE_TOWARDS_LOST:
         stop_and_sweep()
+
+    elif state_args == States.RETURN:
+        return_to_base()
 
     elif state_args == States.STATIC:
         pass
@@ -410,11 +384,14 @@ def state_manager(state_args, target_reward_args):
 # Collision handler for robot and rewards
 def robot_reward_collision(arbiter, space, data):
     global rewards
+    global state
 
     robot_shape, reward_shape = arbiter.shapes  # Get the two colliding shapes
     space.remove(reward_shape, reward_shape.body)  # Remove reward from the physics simulation
-    printf(f"                                               {reward_shape}", "WARN")
+    # printf(f"                                               {reward_shape}", "WARN")
     rewards.remove(reward_shape)  # Remove reward from the game listrd_shape}", "WARN")
+
+    state = States.RETURN #change the state to explore
     return True
 
 handler = space.add_collision_handler(COLLTYPE_ROBOT, COLLTYPE_REWARD)
@@ -423,6 +400,7 @@ handler.begin = robot_reward_collision
 # Collision handler for robot and rewards
 def ir_tracker_boarder_collision(arbiter, space, data):
     global robot_direction
+    global state
 
     # Get collision normal to determine reflection direction
     normal = arbiter.contact_point_set.normal  # Direction of impact
@@ -437,6 +415,9 @@ def ir_tracker_boarder_collision(arbiter, space, data):
     # Update velocity based on new direction
     rad_angle = math.radians(robot_direction)
     robot_body.velocity = pymunk.Vec2d(math.cos(rad_angle) * speed, math.sin(rad_angle) * speed)
+
+    if state==States.RETURN: #this is for the return part
+        state = States.EXPLORE
     return True
 
 # Register the fixed collision handler
@@ -450,10 +431,17 @@ def robot_border_collision(arbiter, space, data):
 handler = space.add_collision_handler(COLLTYPE_ROBOT, COLLTYPE_BORDER)
 handler.begin = robot_border_collision
 
+def get_robot_speed():
+    """Calculate the speed of the robot from its velocity vector."""
+    velocity = robot_body.velocity
+    speed = math.sqrt(velocity.x ** 2 + velocity.y ** 2)
+    return speed
+
 def dynamic_main():
     global ir_tracker_position_x
     global ir_tracker_position_y
     global robot_direction
+    global current_time #time elaspe from the start of the program
     
     # Game loop
     clock = pygame.time.Clock()
@@ -479,8 +467,11 @@ def dynamic_main():
 
         #printf(f"                                       target_reward = {target_reward}", "DEBUG")
 
+        # ============= this code starts here =================
         draw_yellow_border() # Draw the border
         draw_lidar() # Draw LiDAR rays 
+
+        current_time = pygame.time.get_ticks()  # Get current time in milliseconds
         
         # update the ir tracker
         for _ in range(num_ir_trackers):
@@ -490,7 +481,6 @@ def dynamic_main():
             ir_tracker_position_y = robot_body.position.y + offset_number * (math.sqrt((robot_size//2)**2 + (robot_size//2)**2) + ir_tracker_radius) * math.sin(math.radians(robot_direction) + ANGLES_RADIANS[_]) 
             ir_trackers[_].body.position = (ir_tracker_position_x, ir_tracker_position_y)  # Update Pymunk body position
             pygame.draw.circle(screen, RED, (int(ir_tracker_position_x), int(ir_tracker_position_y)), ir_tracker_radius)
-    
         
         # Calculate the top-left corner of the square
         top_left_x = int(robot_body.position.x - robot_size / 2)
@@ -506,15 +496,14 @@ def dynamic_main():
 
         rad_angle = math.radians(robot_direction) #update the angle to be fed into rotate robot
         rotated_corners = rotate_robot(corners, rad_angle) #rotate the robot
-        
 # =============================================================================
-
         target_reward = lidar_scan() # Detect rewards using LiDAR   
         pygame.draw.polygon(screen, BLUE, rotated_corners) # Draw the rotated square
 
         # Move towards detected reward, otherwise explore randomly
         printf(f"           target_reward = {target_reward}", "DEBUG")
-        state_manager(state, target_reward)
+        # state = States.STATIC #force stop
+        state_manager(state)
 
         # Step the physics engine    
         dt = clock.get_time() / 1000.0 # time elasped between two consecutive clock.get_time() calls
@@ -524,13 +513,16 @@ def dynamic_main():
         for reward in rewards:
             pygame.draw.circle(screen, GREEN, (int(reward.body.position.x), int(reward.body.position.y)), reward_radius)
 
-
         # Text for the simulation
         draw_text(f"Status : {state}", (10, 10))
         draw_text(f"{target_reward}", (10, 30))
         draw_text(f"Angle of the robot = {robot_direction} degres", (10, 50))
         draw_text(f"Location of the robot -  x,y = [{robot_body.position.x:7.2f}, {robot_body.position.y:7.2f}]", (10, 70))
         draw_text(f"Location of IR tracker -  x,y = [{robot_direction + ANGLES[0]:7.2f}, {robot_direction + ANGLES[0]:7.2f}] degres", (10, 90))
+        draw_text(f"rotation_index = {rotation_index}", (10, 110))
+        draw_text(f"current_time = {current_time}", (10, 130))
+        draw_text(f"robot speed [x,y] = [{round(math.cos(rad_angle) * get_robot_speed(),2)}, {round(math.sin(rad_angle) * get_robot_speed(),2)}]", (10, 150)) #reverse direction is wrong
+        
         
         # Update the display
         pygame.display.flip()

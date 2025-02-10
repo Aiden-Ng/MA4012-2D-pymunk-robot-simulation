@@ -1,7 +1,7 @@
 # Log params
-LOG = True
+LOG = False
 WARN = True
-DEBUG = True
+DEBUG = False
 
 # Made for logging purpose
 def printf(string_args, state_args = "DEBUG"):
